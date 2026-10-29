@@ -1,0 +1,64 @@
+import time
+import torch
+
+def benchmark_op(op_func, *args, is_cuda=False, runs=10):
+    """Измеряет среднее время выполнения функции (в миллисекундах)."""
+    # Прогрев (warmup)
+    for _ in range(2):
+        _ = op_func(*args)
+        if is_cuda:
+            torch.cuda.synchronize()
+
+    if is_cuda:
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
+        for _ in range(runs):
+            _ = op_func(*args)
+        end_event.record()
+        torch.cuda.synchronize()
+        return start_event.elapsed_time(end_event) / runs
+    else:
+        start_time = time.perf_counter()
+        for _ in range(runs):
+            _ = op_func(*args)
+        end_time = time.perf_counter()
+        return ((end_time - start_time) / runs) * 1000.0
+
+
+def main():
+    has_cuda = torch.cuda.is_available()
+    device_name = torch.cuda.get_device_name(0) if has_cuda else "None"
+    print(f"CUDA доступна: {has_cuda} ({device_name})\n")
+
+    # Для теста берем большие двумерные матрицы 2048 x 2048
+    N = 2048
+    cpu_A = torch.randn(N, N, device="cpu")
+    cpu_B = torch.randn(N, N, device="cpu")
+
+    if has_cuda:
+        gpu_A = cpu_A.cuda()
+        gpu_B = cpu_B.cuda()
+
+    operations = [
+        ("Матричное умножение", lambda a, b: torch.matmul(a, b)),
+        ("Поэлементное сложение", lambda a, b: a + b),
+        ("Поэлементное умножение", lambda a, b: a * b),
+        ("Транспонирование", lambda a, b: a.T),
+        ("Сумма элементов", lambda a, b: a.sum()),
+    ]
+
+    print(f"{'Операция':<25} | {'CPU (мс)':<10} | {'GPU (мс)':<10} | {'Ускорение':<10}")
+    print("-" * 65)
+
+    for name, op in operations:
+        cpu_time = benchmark_op(op, cpu_A, cpu_B, is_cuda=False)
+        if has_cuda:
+            gpu_time = benchmark_op(op, gpu_A, gpu_B, is_cuda=True)
+            speedup = cpu_time / gpu_time if gpu_time > 0 else 0
+            print(f"{name:<25} | {cpu_time:<10.2f} | {gpu_time:<10.2f} | {speedup:<9.1f}x")
+        else:
+            print(f"{name:<25} | {cpu_time:<10.2f} | {'N/A':<10} | {'N/A':<10}")
+
+if __name__ == "__main__":
+    main()
